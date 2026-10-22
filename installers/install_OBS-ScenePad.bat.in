@@ -1,0 +1,86 @@
+@echo off
+setlocal DisableDelayedExpansion
+chcp 65001 >nul
+set "SCENEPAD_SETUP_FILE=%~f0"
+set "SCENEPAD_SETUP_ARG1=%~1"
+set "SCENEPAD_SETUP_ARG2=%~2"
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$s=[IO.File]::ReadAllText($env:SCENEPAD_SETUP_FILE,[Text.Encoding]::UTF8); $p=[regex]::Match($s,'(?ms)^:SCENEPAD_SCRIPT_BEGIN\r?\n(.*?)^:SCENEPAD_SCRIPT_END').Groups[1].Value; if(!$p){exit 1}; & ([scriptblock]::Create($p))"
+exit /b %errorlevel%
+:SCENEPAD_SCRIPT_BEGIN
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
+$copyOnly = $env:SCENEPAD_SETUP_ARG1 -eq '/copy-to'
+$result = 0
+
+function Finish-Countdown {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $previous = 0
+    while ($watch.Elapsed.TotalSeconds -lt 5) {
+        $remaining = [int][Math]::Ceiling(5 - $watch.Elapsed.TotalSeconds)
+        if ($remaining -ne $previous) {
+            [Console]::Write(("`r{0} seconds to exit. Press any key to close.    " -f $remaining))
+            $previous = $remaining
+        }
+        if (-not [Console]::IsInputRedirected -and [Console]::KeyAvailable) {
+            [void][Console]::ReadKey($true)
+            break
+        }
+        Start-Sleep -Milliseconds 50
+    }
+    [Console]::WriteLine()
+}
+
+try {
+    Write-Host 'ScenePad @PLUGIN_VERSION@ - Windows x64 installer'
+    $source = Join-Path (Split-Path -LiteralPath $env:SCENEPAD_SETUP_FILE) 'obs-scenepad'
+    $dll = Join-Path $source 'bin\64bit\obs-scenepad.dll'
+    if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) {
+        throw 'Missing obs-scenepad folder. Extract the complete ZIP before running install_OBS-ScenePad.bat.'
+    }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $dllHash = ([BitConverter]::ToString($sha.ComputeHash([IO.File]::ReadAllBytes($dll)))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    if ($dllHash -ne '@DLL_SHA256@') {
+        throw 'Plugin DLL verification failed. Extract the complete ZIP again.'
+    }
+    foreach ($language in 'en-US','zh-CN','zh-TW') {
+        if (-not (Test-Path -LiteralPath (Join-Path $source "data\locale\$language.ini") -PathType Leaf)) {
+            throw ('Missing plugin language file: ' + $language)
+        }
+    }
+    if (-not [Environment]::Is64BitOperatingSystem) { throw '64-bit Windows is required.' }
+    if ($copyOnly) {
+        if ([string]::IsNullOrWhiteSpace($env:SCENEPAD_SETUP_ARG2)) { throw 'Usage: install_OBS-ScenePad.bat /copy-to "output directory"' }
+        $destination = [IO.Path]::GetFullPath($env:SCENEPAD_SETUP_ARG2)
+    } else {
+        if ($env:SCENEPAD_SETUP_ARG1) { throw 'Double-click the BAT to install, or use /copy-to "directory" to copy the plugin.' }
+        if (Get-Process -Name obs64 -ErrorAction SilentlyContinue) {
+            throw 'Close OBS before running this installer again.'
+        }
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+        if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+            Write-Host 'Requesting administrator access to install to the shared OBS plugin folder...'
+            $arguments = '/d /s /c ""' + $env:SCENEPAD_SETUP_FILE + '""'
+            $process = Start-Process -FilePath $env:ComSpec -ArgumentList $arguments -Verb RunAs -Wait -PassThru
+            exit $process.ExitCode
+        }
+        $destination = Join-Path $env:ProgramData 'obs-studio\plugins'
+    }
+    [void][IO.Directory]::CreateDirectory($destination)
+    $target = Join-Path $destination 'obs-scenepad'
+    if (-not [IO.Path]::GetFullPath($source).Equals([IO.Path]::GetFullPath($target), [StringComparison]::OrdinalIgnoreCase)) {
+        Copy-Item -LiteralPath $source -Destination $destination -Recurse -Force
+    }
+    if ($copyOnly) { Write-Host ('Plugin copied: ' + $target) }
+    else {
+        Write-Host ('ScenePad installed: ' + $target)
+        Write-Host 'Start OBS and enable ScenePad in the Docks menu.'
+    }
+} catch {
+    $result = 1
+    Write-Host ('Installation failed: ' + $_.Exception.Message) -ForegroundColor Red
+}
+Finish-Countdown
+exit $result
+:SCENEPAD_SCRIPT_END

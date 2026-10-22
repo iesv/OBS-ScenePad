@@ -1,0 +1,216 @@
+name: Build and release
+on:
+  workflow_dispatch:
+    inputs:
+      checks:
+        description: Functional checks
+        type: choice
+        options: [full, focused-editing, return-only]
+        default: full
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  OBS_VERSION: '32.0.4'
+  DEPS_VERSION: '2025-08-23'
+  PYTHONUTF8: '1'
+  SCENEPAD_CHECKS: ${{ inputs.checks || 'full' }}
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/cache/restore@v6.1.0
+        id: sdk
+        with:
+          path: |
+            ${{ runner.temp }}/scenepad-sdk
+            ${{ runner.temp }}/obs-studio-32.0.4/.deps
+          key: obs-32.0.4-deps-2025-08-23-${{ runner.os }}-${{ runner.arch }}-1
+      - name: Build OBS SDK
+        if: steps.sdk.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $source = "$env:RUNNER_TEMP/obs-studio-$env:OBS_VERSION"
+          $archive = "$env:RUNNER_TEMP/obs.zip"
+          curl.exe -fsSL --retry 3 "https://codeload.github.com/obsproject/obs-studio/zip/refs/tags/$env:OBS_VERSION" -o $archive
+          if ((Get-FileHash $archive).Hash.ToLowerInvariant() -ne '5e17f2e99213af77ee15c047755ee3e3e88b78e5eee17351c113d79671ffb98b') { throw 'OBS source hash mismatch.' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $env:RUNNER_TEMP -Force
+          cmake -S $source -B "$env:RUNNER_TEMP/obs-build" -G 'Visual Studio 17 2022' -A x64 -DENABLE_PLUGINS=OFF -DENABLE_FRONTEND=OFF -DENABLE_SCRIPTING=OFF -DENABLE_BROWSER=OFF "-DOBS_VERSION_OVERRIDE=$env:OBS_VERSION"
+          cmake --build "$env:RUNNER_TEMP/obs-build" --config Release --target obs-frontend-api --parallel 4
+          cmake --install "$env:RUNNER_TEMP/obs-build" --config Release --component Development --prefix "$env:RUNNER_TEMP/scenepad-sdk"
+      - uses: actions/cache/save@v6.1.0
+        if: steps.sdk.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ${{ runner.temp }}/scenepad-sdk
+            ${{ runner.temp }}/obs-studio-32.0.4/.deps
+          key: obs-32.0.4-deps-2025-08-23-${{ runner.os }}-${{ runner.arch }}-1
+      - name: Build, test, and package
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $sdk = "$env:RUNNER_TEMP/scenepad-sdk"
+          $deps = "$env:RUNNER_TEMP/obs-studio-$env:OBS_VERSION/.deps"
+          $qt = "$deps/obs-deps-qt6-$env:DEPS_VERSION-x64"
+          $prebuilt = "$deps/obs-deps-$env:DEPS_VERSION-x64"
+          $env:PATH = "$sdk/bin/64bit;$qt/bin;$prebuilt/bin;$env:PATH"
+          $env:QT_PLUGIN_PATH = "$qt/plugins"
+          $env:QT_QPA_PLATFORM = 'minimal'
+          cmake -S . -B build -G 'Visual Studio 17 2022' -A x64 "-DCMAKE_PREFIX_PATH=$sdk;$qt;$prebuilt" -DBUILD_TESTING=ON
+          if ($env:SCENEPAD_CHECKS -eq 'return-only') {
+            cmake --build build --config Release --target obs-scenepad scenepad-tests --parallel 4
+            $env:QT_QPA_PLATFORM = 'windows'
+            foreach ($localeName in @('en-US', 'zh-CN', 'zh-TW')) {
+              ./build/Release/scenepad-tests.exe --return-only "data/locale/$localeName.ini"
+            }
+            $env:PYTHONPATH = "$env:RUNNER_TEMP/scenepad-web-python"
+            python -m pip install --target $env:PYTHONPATH --disable-pip-version-check playwright==1.64.0
+            python .github/web-stress.py --return-only
+          } elseif ($env:SCENEPAD_CHECKS -eq 'focused-editing') {
+            cmake --build build --config Release --target obs-scenepad scenepad-tests scenepad-remote-tests --parallel 4
+            $env:QT_QPA_PLATFORM = 'windows'
+            ./build/Release/scenepad-remote-tests.exe --pwa-only
+            ./build/Release/scenepad-tests.exe --focused-editing preview-editing
+            $env:PYTHONPATH = "$env:RUNNER_TEMP/scenepad-web-python"
+            python -m pip install --target $env:PYTHONPATH --disable-pip-version-check playwright==1.64.0
+            python .github/web-stress.py --focused-editing
+          } else {
+            cmake --build build --config Release --parallel 4
+            python tests/make-fixtures.py
+            ctest --test-dir build -C Release --output-on-failure -V
+            $env:QT_QPA_PLATFORM = 'windows'
+            ./build/Release/scenepad-tests.exe tests/fixtures/basic.docx data/locale/zh-CN.ini 滚动 preview.png
+            $env:QT_QPA_PLATFORM = 'minimal'
+            node --test tests/web-test.mjs
+            $env:PYTHONPATH = "$env:RUNNER_TEMP/scenepad-web-python"
+            python -m pip install --target $env:PYTHONPATH --disable-pip-version-check playwright==1.64.0
+            python .github/web-stress.py
+            $env:QT_QPA_PLATFORM = 'windows'
+            ./build/Release/scenepad-remote-tests.exe tests/fixtures/basic.docx
+            ./build/Release/scenepad-notes-tests.exe tests/fixtures/basic.docx --ui-only
+            ./build/Release/scenepad-stress.exe --long-text
+            ./build/Release/scenepad-stress.exe tests/fixtures/long.docx tests/fixtures/long-line.docx
+          }
+          cmake --install build --config Release --prefix staging
+          python .github/package.py windows staging
+          if ($env:SCENEPAD_CHECKS -ne 'focused-editing') { python tests/test-package.py (Get-ChildItem dist/OBS-ScenePad-*-Windows-x64.zip).FullName }
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: Windows-x64
+          path: dist/*.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7.0.2
+        if: env.SCENEPAD_CHECKS != 'return-only'
+        with:
+          name: Windows-preview
+          path: preview*.png
+          if-no-files-found: error
+  macos:
+    name: macOS ARM64
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/cache/restore@v6.1.0
+        id: sdk
+        with:
+          path: |
+            ${{ runner.temp }}/scenepad-sdk
+            ${{ runner.temp }}/obs-studio-32.0.4/.deps
+          key: obs-32.0.4-deps-2025-08-23-${{ runner.os }}-${{ runner.arch }}-arm64-1
+      - name: Build OBS SDK
+        if: steps.sdk.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_dir="$RUNNER_TEMP/obs-studio-$OBS_VERSION"
+          archive="$RUNNER_TEMP/obs.zip"
+          curl -fsSL --retry 3 "https://codeload.github.com/obsproject/obs-studio/zip/refs/tags/$OBS_VERSION" -o "$archive"
+          echo "5e17f2e99213af77ee15c047755ee3e3e88b78e5eee17351c113d79671ffb98b  $archive" | shasum -a 256 -c -
+          unzip -q "$archive" -d "$RUNNER_TEMP"
+          cmake -S "$source_dir" -B "$RUNNER_TEMP/obs-build" -G Xcode "-DCMAKE_PROJECT_INCLUDE=$GITHUB_WORKSPACE/.github/obs-macos.cmake" -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 -DENABLE_PLUGINS=OFF -DENABLE_FRONTEND=OFF -DENABLE_SCRIPTING=OFF -DENABLE_BROWSER=OFF "-DOBS_VERSION_OVERRIDE=$OBS_VERSION"
+          cmake --build "$RUNNER_TEMP/obs-build" --config Release --target obs-frontend-api --parallel 4
+          cmake --install "$RUNNER_TEMP/obs-build" --config Release --component Development --prefix "$RUNNER_TEMP/scenepad-sdk"
+      - uses: actions/cache/save@v6.1.0
+        if: steps.sdk.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ${{ runner.temp }}/scenepad-sdk
+            ${{ runner.temp }}/obs-studio-32.0.4/.deps
+          key: obs-32.0.4-deps-2025-08-23-${{ runner.os }}-${{ runner.arch }}-arm64-1
+      - name: Build, test, and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk="$RUNNER_TEMP/scenepad-sdk"
+          deps="$RUNNER_TEMP/obs-studio-$OBS_VERSION/.deps"
+          qt="$deps/obs-deps-qt6-$DEPS_VERSION-universal"
+          prebuilt="$deps/obs-deps-$DEPS_VERSION-universal"
+          export QT_PLUGIN_PATH="$qt/plugins"
+          export QT_QPA_PLATFORM=cocoa
+          export DYLD_LIBRARY_PATH="$sdk/lib:$qt/lib:$prebuilt/lib"
+          export DYLD_FRAMEWORK_PATH="$sdk/Frameworks:$sdk/lib:$qt/lib:$prebuilt/Frameworks"
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install libarchive
+          cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0 "-DCMAKE_PREFIX_PATH=$sdk;$qt;$prebuilt" "-Dlibobs_DIR=$sdk/Frameworks/libobs.framework/Resources/cmake" "-DLIBARCHIVE_INCLUDE_DIR=$(brew --prefix libarchive)/include" -DBUILD_TESTING=ON
+          if [ "$SCENEPAD_CHECKS" = return-only ]; then
+            cmake --build build --config Release --target obs-scenepad scenepad-tests --parallel 4
+            for locale_name in en-US zh-CN zh-TW; do
+              ./build/Release/scenepad-tests --return-only "data/locale/$locale_name.ini"
+            done
+            export PYTHONPATH="$RUNNER_TEMP/scenepad-web-python"
+            python3 -m pip install --target "$PYTHONPATH" --disable-pip-version-check playwright==1.64.0
+            python3 .github/web-stress.py --return-only
+          elif [ "$SCENEPAD_CHECKS" = focused-editing ]; then
+            cmake --build build --config Release --target obs-scenepad scenepad-tests scenepad-remote-tests --parallel 4
+            ./build/Release/scenepad-remote-tests --pwa-only
+            ./build/Release/scenepad-tests --focused-editing
+            export PYTHONPATH="$RUNNER_TEMP/scenepad-web-python"
+            python3 -m pip install --target "$PYTHONPATH" --disable-pip-version-check playwright==1.64.0
+            python3 .github/web-stress.py --focused-editing
+          else
+            cmake --build build --config Release --parallel 4
+            python3 tests/make-fixtures.py
+            ctest --test-dir build -C Release --output-on-failure -V
+            node --test tests/web-test.mjs
+            export PYTHONPATH="$RUNNER_TEMP/scenepad-web-python"
+            python3 -m pip install --target "$PYTHONPATH" --disable-pip-version-check playwright==1.64.0
+            python3 .github/web-stress.py
+            ./build/Release/scenepad-stress --long-text
+            ./build/Release/scenepad-stress tests/fixtures/long.docx tests/fixtures/long-line.docx
+          fi
+          cmake --install build --config Release --prefix staging
+          codesign --force --sign - --timestamp=none staging/obs-scenepad.plugin
+          python3 .github/package.py macos staging
+          if [ "$SCENEPAD_CHECKS" != focused-editing ]; then python3 tests/test-package.py dist/OBS-ScenePad-*-macOS-arm64.zip; fi
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: macOS-arm64
+          path: dist/*.zip
+          if-no-files-found: error
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release delete "$GITHUB_REF_NAME" --yes
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/*.zip --verify-tag --title "$GITHUB_REF_NAME" --notes "INIT"

@@ -1,0 +1,109 @@
+<!doctype html><meta charset="utf-8"><title>ScenePad browser stress</title>
+<style>#editor{width:360px;height:400px;overflow:auto;overflow-wrap:anywhere;word-break:normal;line-break:strict;white-space:pre-wrap}</style>
+<div id="editor" contenteditable="true" spellcheck="false"></div><pre id="result">Running</pre>
+<script>
+addEventListener('error',event=>document.getElementById('result').textContent=JSON.stringify({ok:false,error:event.message||'Module load failed'}));
+</script>
+<script type="module">
+import {render,serialize,plainDocument,formatSelection,acceptsEdit,importHtml,insertText,insertMark,markAt,withinTextLimits} from '../web/document.mjs';
+const root=document.getElementById('editor'),result=document.getElementById('result');
+const metrics=[];
+const require=(condition,message)=>{if(!condition)throw Error(message);};
+const measure=operation=>{const start=performance.now();operation();return Math.round(performance.now()-start);};
+try{
+  const boundary='A'.repeat(10000)+('\n'+'B'.repeat(9999)).repeat(19);
+  render(root,plainDocument(boundary));
+  const end=document.createRange();end.selectNodeContents(root.lastChild);end.collapse(false);
+  require(!acceptsEdit(root,'x',end),'Total limit can be bypassed');
+  end.setStart(root.lastChild.firstChild.firstChild,9998);
+  require(acceptsEdit(root,'x',end),'Replacement at the cap was rejected');
+  let rejected=false;try{importHtml('<p>'+'W'.repeat(10001)+'</p>',document);}catch(error){rejected=error.message==='limit';}
+  require(rejected,'HTML import bypasses the paragraph cap');
+  const duration=measure(()=>{for(let i=0;i<1000;++i)require(acceptsEdit(root,'x',end),'Repeated replacement failed');});
+  metrics.push({name:'1000-browser-limit-checks',elapsed:duration});
+  require(duration<3000,'Browser limit checking adds too much work');
+  render(root,plainDocument('\n'.repeat(19999)));
+  const blank=document.createRange();blank.selectNodeContents(root.lastChild);blank.collapse(true);
+  require(!acceptsEdit(root,'\n',blank)&&acceptsEdit(root,'x',blank),'Blank paragraphs bypass the count cap or prevent editing');
+  const select=range=>{const selection=document.getSelection();selection.removeAllRanges();selection.addRange(range);};
+  root.replaceChildren();const noParagraph=document.createRange();noParagraph.selectNodeContents(root);noParagraph.collapse(true);select(noParagraph);
+  require(!acceptsEdit(root,'A'.repeat(10001)),'Empty editor bypasses the paragraph cap');
+  render(root,plainDocument(''));const paste=document.createRange();paste.selectNodeContents(root);select(paste);
+  insertText(root,boundary.replaceAll('\n','\r\n'));
+  require(serialize(root).blocks.map(block=>block.runs.map(run=>run.text).join('')).join('\n')===boundary&&withinTextLimits(serialize(root)),'Multi-paragraph paste changed text or separators');
+  const replace=document.createRange();replace.setStart(root.firstChild.firstChild,9999);replace.setEnd(root.childNodes[1].firstChild,1);select(replace);
+  insertText(root,'x\ny');
+  require(withinTextLimits(serialize(root))&&root.children.length===20,'Cross-paragraph replacement exceeded the cap');
+  const remove=document.createRange();remove.setStart(root.childNodes[1].firstChild,0);remove.setEnd(root.childNodes[2].firstChild,9999);select(remove);
+  insertText(root,'');
+  require(root.children.length===19&&withinTextLimits(serialize(root)),'Cross-paragraph deletion did not merge paragraphs');
+  const saved=JSON.stringify(serialize(root));let overflow=false;
+  try{insertText(root,'W'.repeat(10001));}catch(error){overflow=error.message==='limit';}
+  require(overflow&&JSON.stringify(serialize(root))===saved,'Rejected paste changed existing content');
+  render(root,plainDocument(''));const empty=document.createRange();empty.selectNodeContents(root.firstChild);empty.collapse(true);select(empty);
+  insertText(root,'W'.repeat(10000));require(serialize(root).blocks[0].runs[0].text.length===10000,'Empty-paragraph placeholder became a soft break');
+  render(root,plainDocument('ab\ncd'));root.firstChild.firstChild.style.fontWeight='700';root.lastChild.firstChild.style.fontStyle='italic';
+  const formatted=document.createRange();formatted.setStart(root.firstChild.firstChild.firstChild,1);formatted.setEnd(root.lastChild.firstChild.firstChild,1);select(formatted);
+  insertText(root,'X');const merged=serialize(root).blocks;
+  require(merged.length===1&&merged[0].runs.map(run=>run.text).join('')==='aXd'&&merged[0].runs[0].weight===700&&merged[0].runs.at(-1).italic,'Replacement lost boundary formatting');
+  const between=document.createRange();between.setStart(root,root.childNodes.length);between.collapse(true);select(between);insertText(root,'!');
+  require(root.children.length===1&&root.textContent==='aXd!','Root-level caret lost existing text');
+  metrics.push({name:'multi-paragraph-paste-replace-delete',ok:true});
+  for(const text of ['', 'A'.repeat(10000), boundary]){
+    render(root,plainDocument(text));const caret=document.createRange();caret.selectNodeContents(root.lastChild);caret.collapse(false);select(caret);
+    let limited=false;try{insertMark(root);}catch(error){limited=error.message==='limit';}
+    require(limited===!!text,'Mark ignores a text limit or rejects an empty paragraph');
+    require(root.textContent===(text?text.replaceAll('\n',''):'◆[]'),'Rejected mark changes existing text');
+  }
+  render(root,plainDocument('A'.repeat(7000)));const markCaret=document.createRange();markCaret.selectNodeContents(root.firstChild);markCaret.collapse(false);select(markCaret);
+  const markSamples=[];
+  const markTime=measure(()=>{for(let i=0;i<1000;++i){const start=performance.now();insertMark(root);const range=document.createRange();range.selectNodeContents(root.firstChild);range.collapse(false);select(range);markSamples.push(performance.now()-start);}});
+  require(serialize(root).blocks[0].runs.map(run=>run.text).join('')==='A'.repeat(7000)+'◆[]'.repeat(1000),'Repeated marks changed existing text');
+  markSamples.sort((a,b)=>a-b);const markPeak=markSamples.at(-1),mark95=markSamples[949],mark99=markSamples[989];
+  metrics.push({name:'1000-mark-insertions',elapsed:markTime,peak:markPeak,p95:mark95,p99:mark99});
+  require(markTime<10000&&mark99<50&&mark95<=1000/60,'Mark insertion exceeded interactive latency limits');
+  render(root,plainDocument(('A'.repeat(75)+'◆[Camera one 中文] End\n').repeat(1999)+'A'.repeat(75)+'◆[Camera one 中文] End'));
+  const token=root.lastChild.querySelector('[data-mark]'),hit=document.createRange();hit.selectNodeContents(token);hit.collapse(true);
+  const beforeMarks=root.innerHTML,getter=Object.getOwnPropertyDescriptor(Node.prototype,'textContent').get,originalWalker=document.createTreeWalker;
+  let reads=0,scans=0;
+  Object.defineProperty(root,'textContent',{configurable:true,get(){++reads;return getter.call(this);}});
+  document.createTreeWalker=function(node,...args){if(node===root)++scans;return originalWalker.call(this,node,...args);};
+  let markLookup;
+  try{markLookup=measure(()=>{for(let i=0;i<1000;++i)require(markAt(root,hit)?.text==='◆[Camera one 中文]','Mark note lookup lost its range');});}
+  finally{delete root.textContent;document.createTreeWalker=originalWalker;}
+  require(markLookup<1000&&reads===0&&scans===0&&root.innerHTML===beforeMarks,'Mark note lookup scans or modifies the whole script');
+  metrics.push({name:'1000-mark-note-lookups',elapsed:markLookup,fullReads:reads,fullScans:scans});
+  render(root,plainDocument('A'.repeat(9999)+'◆'));const fullMark=document.createRange();fullMark.selectNode(root.querySelector('[data-mark]'));select(fullMark);
+  let noteLimited=false;try{insertMark(root,'◆[Note]',fullMark);}catch(error){noteLimited=error.message==='limit';}
+  require(noteLimited&&root.textContent==='A'.repeat(9999)+'◆','Note replacement bypasses the paragraph limit');
+  for(const [name,text] of [['paragraph-10k','W'.repeat(9998)],['note-200k',Array(20).fill('W'.repeat(9998)).join('\n')],['paragraphs-20000','123456789\n'.repeat(19999)+'123456789'],['words-200k',('alpha beta, gamma delta! '.repeat(400)+'\n').repeat(19)+'alpha'],['CJK-200k',('他说：“你好，世界！”（继续阅读）测试。'.repeat(450)+'\n').repeat(19)+'正文']]){
+    const model=plainDocument(text);let saved;
+    const load=measure(()=>{render(root,model);void root.scrollHeight;});
+    const save=measure(()=>{saved=serialize(root);});
+    require(saved.blocks.map(block=>block.runs.map(run=>run.text).join('')).join('\n')===text,'Browser round trip changed text');
+    const range=document.createRange();range.selectNodeContents(root);document.getSelection().removeAllRanges();document.getSelection().addRange(range);
+    const format=measure(()=>{require(formatSelection(root,'weight',700),'Formatting failed');void root.scrollHeight;});
+    require(serialize(root).blocks.every(block=>block.runs.every(run=>run.weight===700)),'Formatting lost runs');
+    metrics.push({name,load,save,format});
+    require(Math.max(load,save,format)<5000,'Browser long-text operation exceeded 5 seconds');
+  }
+  for(const lines of [200,500]){
+    const p=document.createElement('p'),fragment=document.createDocumentFragment();
+    for(let i=0;i<lines;++i){if(i)fragment.append(document.createElement('br'));fragment.append('alpha beta');}
+    p.append(fragment);root.replaceChildren(p);
+    // Count full-parent reads as well as elapsed time.
+    const getter=Object.getOwnPropertyDescriptor(Node.prototype,'textContent').get;let reads=0;
+    Object.defineProperty(p,'textContent',{get(){++reads;return getter.call(this);}});
+    let saved;const save=measure(()=>{saved=serialize(root);}),saveReads=reads;
+    const expected=Array(lines).fill('alpha beta').join('\u2028');
+    require(saved.blocks[0].runs.map(run=>run.text).join('')===expected,'Soft breaks changed during save');
+    reads=0;const range=document.createRange();range.selectNodeContents(root);document.getSelection().removeAllRanges();document.getSelection().addRange(range);
+    const format=measure(()=>{require(formatSelection(root,'italic',true),'Soft-break formatting failed');void root.scrollHeight;}),formatReads=reads;
+    require(serialize(root).blocks[0].runs.map(run=>run.text).join('')===expected,'Soft breaks changed during formatting');
+    metrics.push({name:`soft-breaks-${lines}`,save,format,saveReads,formatReads});
+    require(saveReads<=1&&formatReads<=2,'Soft breaks repeatedly scan their parent');
+    require(Math.max(save,format)<5000,'Soft-break operation exceeded 5 seconds');
+  }
+  result.textContent=JSON.stringify({ok:true,metrics});
+}catch(error){result.textContent=JSON.stringify({ok:false,error:String(error),metrics});}
+</script>

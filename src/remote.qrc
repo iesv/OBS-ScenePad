@@ -1,0 +1,11 @@
+<RCC><qresource prefix="/remote">
+<file alias="index.html">../web/index.html</file>
+<file alias="style.css">../web/style.css</file>
+<file alias="app.mjs">../web/app.mjs</file>
+<file alias="protocol.mjs">../web/protocol.mjs</file>
+<file alias="document.mjs">../web/document.mjs</file>
+<file alias="manifest.webmanifest">../web/manifest.webmanifest</file>
+<file alias="icon.svg">../web/icon.svg</file>
+<file alias="icon-192.png">../web/icon-192.png</file>
+<file alias="icon-512.png">../web/icon-512.png</file>
+</qresource></RCC>

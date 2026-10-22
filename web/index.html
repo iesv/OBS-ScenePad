@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+<title>ScenePad</title><meta name="theme-color" content="#202126"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="ScenePad">
+<link rel="manifest" href="/manifest.webmanifest"><link rel="icon" type="image/svg+xml" href="/icon.svg"><link rel="apple-touch-icon" href="/icon-192.png"><link rel="stylesheet" href="/style.css"><script type="module" src="/app.mjs"></script></head>
+<body>
+<header><div class="header-content"><div class="connection-status"><strong id="brand">ScenePad</strong><span id="connection" role="status"></span></div><span id="owner"></span><button id="disconnect" data-text="RemoteDisconnect" hidden></button></div></header>
+<main>
+<form id="login"><label><span data-text="RemoteDevice"></span><input id="device" maxlength="32" autocomplete="nickname" value="Browser"></label>
+<label><span data-text="RemotePassword"></span><input id="password" type="password" autocomplete="current-password" required maxlength="256" autofocus></label>
+<label class="check"><input id="remember" type="checkbox" checked><span data-text="RemoteRememberSession"></span></label>
+<p id="login-error" role="alert" hidden></p><button type="submit" data-text="RemoteConnect"></button></form>
+<section id="workspace" hidden>
+<div class="top-controls">
+<div class="row scene-row"><select id="scenes" aria-label="Scene"></select><label class="check"><input id="follow" type="checkbox" checked><span data-text="RemoteFollow"></span></label><div class="search"><input id="search" type="search" autocomplete="off"><span id="matches" aria-live="polite"></span><div class="search-actions">
+<button id="previous" type="button" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6"/></svg></button>
+<button id="next" type="button" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+<button id="clear-search" type="button" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+</div></div></div>
+<div id="text-tools" class="row tools">
+<div id="file-tools" class="tool-group"><button id="import" aria-label="Import Word, HTML or text"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 16v5h16v-5"/></svg></button><input id="import-file" type="file" accept=".docx,.html,.htm,.txt" hidden>
+<div class="file-export"><button type="button" tabindex="-1" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3M8 7l4-4 4 4M4 16v5h16v-5"/></svg></button><select id="export" aria-label="Export"><option value="html" data-text="ExportHTML"></option><option value="txt" data-text="ExportTXT"></option></select></div></div>
+<div id="format" class="tool-group">
+<div id="font-controls" class="tool-group"><select id="family" aria-label="Font"><option>Arial</option><option>Verdana</option><option>Georgia</option><option>Times New Roman</option><option>Courier New</option><option>Microsoft YaHei</option><option>PingFang SC</option></select>
+<input id="size" type="number" min="6" max="144" value="12" aria-label="Font size"></div>
+<div id="text-format-controls" class="tool-group">
+<button data-format="weight" data-value="700" aria-label="Bold"><svg viewBox="1 0 24 24" aria-hidden="true" style="stroke-width:3.2"><path d="M7 4v16h6c8 0 8-8 0-8H7m0-8h5c8 0 8 8 0 8"/></svg></button><button data-format="italic" data-value="true" aria-label="Italic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4h8M6 20h8M15 4 9 20"/></svg></button><button data-format="underline" data-value="true" aria-label="Underline"><svg viewBox="0 1 24 24" aria-hidden="true"><path d="M6 4v8c0 8 12 8 12 0V4M5 22h14"/></svg></button><button data-format="strike" data-value="true" aria-label="Strikethrough"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6C7 0 2 11 12 12c10 1 5 12-6 6M4 12h16"/></svg></button><span class="separator"></span>
+<input id="color" type="color" value="#eeeeee" aria-label="Text color"><input id="highlight" type="color" value="#665b18" aria-label="Highlight">
+<button id="clear-format" aria-label="Clear formatting"><svg viewBox="-0.5 0.5 24 24" aria-hidden="true"><path d="m4 14 9-10 7 6-10 11H7l-5-5zM10 8l7 6M12 21h9"/></svg></button>
+<button id="format-painter" aria-label="Format painter" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="7" rx="1"/><path d="M18 10v4h-6v7"/></svg></button>
+<span class="separator"></span><button id="insert-mark" aria-label="Insert mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 4 8 8-8 8-8-8z"/></svg></button>
+<button id="next-mark" aria-label="Next mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 6 7-6 7-6-7zM17 7l5 5-5 5"/></svg></button>
+</div></div></div>
+</div>
+<aside id="problem" role="alert" hidden><p id="message"></p><button id="retry" data-text="RemoteRetry"></button><button id="download" data-text="RemoteDownload"></button><button id="reload" data-text="RemoteReload"></button></aside>
+<div id="reader"><article id="document" contenteditable="false" spellcheck="false" role="textbox" aria-multiline="true" tabindex="0"></article><div id="band" hidden></div></div>
+<footer class="tools"><div class="reading-controls"><div class="reading-buttons tool-group"><button id="play"></button><button id="top"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14M12 20V8m-5 5 5-5 5 5"/></svg></button><button id="guide" type="button" aria-pressed="true"><svg viewBox="-0.5 0 24 24" aria-hidden="true"><path d="M7 5h13M7 19h13M2 9l3 3-3 3M9 12h12"/></svg></button><label class="check" id="countdown-label"><input id="countdown" type="checkbox"><span>3s</span></label></div><div class="reading-settings"><input id="speed" type="range" min="0.1" max="5" step="0.1" value="0.5" aria-label="Speed"><span class="speed-value"><input id="multiplier" type="number" min="0.1" max="5" step="0.1" value="0.5" aria-label="Speed"><span class="speed-unit" aria-hidden="true">×</span></span></div><div class="reading-metrics"><input id="go-to" type="text" enterkeyhint="go" maxlength="10" autocomplete="off" hidden><button id="lines" type="button"></button><span class="separator" aria-hidden="true"></span><button id="characters" type="button"></button><span class="separator" aria-hidden="true"></span><button id="percent" type="button">0%</button></div></div><div class="paragraph-controls"><div id="paragraph" class="tool-group"><div class="tool-group paragraph-group">
+<button data-align="1" aria-label="Align left"><svg viewBox="0 0.5 24 24" aria-hidden="true"><path d="M3 5h18M3 10h11M3 15h18M3 20h11"/></svg></button>
+<button data-align="4" aria-label="Align center"><svg viewBox="0 0.5 24 24" aria-hidden="true"><path d="M3 5h18M7 10h10M3 15h18M7 20h10"/></svg></button>
+<button data-align="2" aria-label="Align right"><svg viewBox="0 0.5 24 24" aria-hidden="true"><path d="M3 5h18M10 10h11M3 15h18M10 20h11"/></svg></button>
+<button data-align="8" aria-label="Justify"><svg viewBox="0 0.5 24 24" aria-hidden="true"><path d="M3 5h18M3 10h18M3 15h18M3 20h18"/></svg></button></div><div class="tool-group paragraph-group">
+<select id="list" aria-label="List style"><option value="0" data-text="RemoveList"></option><option value="-1" data-text="ListDisc"></option><option value="-2" data-text="ListCircle"></option><option value="-3" data-text="ListSquare"></option><option value="-4" data-text="ListDecimal"></option><option value="-5" data-text="ListLowerAlpha"></option><option value="-6" data-text="ListUpperAlpha"></option><option value="-7" data-text="ListLowerRoman"></option><option value="-8" data-text="ListUpperRoman"></option></select>
+<button id="indent-less" aria-label="Decrease indent"><svg viewBox="-0.5 0 24 24" aria-hidden="true"><path d="M3 4h18M11 9h10M11 14h10M3 20h18M6 8l-4 4 4 4"/></svg></button>
+<button id="indent-more" aria-label="Increase indent"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18M11 9h10M11 14h10M3 20h18M3 8l4 4-4 4"/></svg></button></div><div class="tool-group paragraph-group">
+<button id="insert-time" aria-label="Insert date and time"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/></svg></button></div>
+</div><div class="reading-target"><span class="separator" aria-hidden="true"></span><button id="target" type="button" value="local" aria-pressed="false" data-text="RemoteLocal"></button></div></div></footer>
+</section></main>
+</body></html>
